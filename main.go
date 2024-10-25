@@ -2,12 +2,38 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 
 	"github.com/yKanazawa/sendgrid-dev/route"
 )
 
 func main() {
+	args := os.Args
+	if len(args) > 1 {
+		arg := args[1]
+		if arg == "health" {
+			resp, err := http.Get("http://localhost:3030/health")
+			if err != nil {
+				fmt.Printf("%s\n", err.Error())
+				os.Exit(1)
+			}
+			defer func() {
+				_ = resp.Body.Close()
+			}()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("%s\n", err.Error())
+				os.Exit(1)
+			}
+			if resp.StatusCode != http.StatusOK {
+				fmt.Printf("status=%s, body=%s\n", resp.Status, string(body))
+				os.Exit(1)
+			}
+		}
+		return
+	}
 	if os.Getenv("SENDGRID_DEV_API_SERVER") == "" {
 		os.Setenv("SENDGRID_DEV_API_SERVER", ":3030")
 	}

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/labstack/echo"
+	"github.com/labstack/echo/v4"
 	model "github.com/yKanazawa/sendgrid-dev/model/v3/mail"
 )
 

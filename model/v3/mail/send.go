@@ -1,17 +1,15 @@
 package send
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/smtp"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/jordan-wright/email"
 	"gopkg.in/go-playground/validator.v9"
@@ -31,8 +29,9 @@ type PostRequest struct {
 			Email string `json:"email"`
 			Name  string `json:"name"`
 		} `json:"bcc"`
-		Substitutions map[string]string `json:"substitutions"`
-		Subject       string            `json:"subject"`
+		Substitutions       map[string]string      `json:"substitutions"`
+		Subject             string                 `json:"subject"`
+		DynamicTemplateData map[string]interface{} `json:"dynamic_template_data,omitempty"`
 	} `json:"personalizations" validate:"required"`
 	From struct {
 		Email string `json:"email" validate:"required"`
@@ -54,6 +53,7 @@ type PostRequest struct {
 		Disposition string `json:"disposition"`
 		ContentId   string `json:"content_id"`
 	} `json:"attachments"`
+	TemplateID string `json:"template_id"`
 }
 
 type ErrorResponse struct {
@@ -157,19 +157,22 @@ func sendMailWithSMTP(postRequest PostRequest) (int, ErrorResponse) {
 					"http://sendgrid.com/docs/API_Reference/Web_API_v3/Mail/errors.html#message.subject",
 				)
 		}
-
-		for _, content := range postRequest.Content {
-			if content.Type == "text/html" {
-				e.HTML = []byte(replacer.Replace((content.Value)))
-			} else {
-				e.Text = []byte(replacer.Replace((content.Value)))
+		if postRequest.TemplateID != "" && len(personalizations.DynamicTemplateData) > 0 {
+			// TODO
+		} else {
+			for _, content := range postRequest.Content {
+				if content.Type == "text/html" {
+					e.HTML = []byte(replacer.Replace((content.Value)))
+				} else {
+					e.Text = []byte(replacer.Replace((content.Value)))
+				}
 			}
 		}
 
 		i := 0
 		for _, attachment := range postRequest.Attachments {
-			dirName := createAttachment(attachment.Filename, attachment.Content, i)
-			if dirName == "" {
+			data, err := base64.StdEncoding.DecodeString(attachment.Content)
+			if err != nil {
 				return http.StatusBadRequest,
 					GetErrorResponse(
 						"The attachment content must be base64 encoded.",
@@ -177,7 +180,23 @@ func sendMailWithSMTP(postRequest PostRequest) (int, ErrorResponse) {
 						"http://sendgrid.com/docs/API_Reference/Web_API_v3/Mail/errors.html#message.attachments.content",
 					)
 			}
-			e.AttachFile(filepath.Join(dirName, attachment.Filename))
+			buf := new(bytes.Buffer)
+			if _, err = buf.Write(data); err != nil {
+				return http.StatusInternalServerError,
+					GetErrorResponse(
+						err.Error(),
+						"attachments."+strconv.Itoa(i)+".content",
+						"http://sendgrid.com/docs/API_Reference/Web_API_v3/Mail/errors.html#message.attachments.content",
+					)
+			}
+			if _, err = e.Attach(buf, attachment.Filename, attachment.Type); err != nil {
+				return http.StatusInternalServerError,
+					GetErrorResponse(
+						err.Error(),
+						"attachments."+strconv.Itoa(i)+".content",
+						"http://sendgrid.com/docs/API_Reference/Web_API_v3/Mail/errors.html#message.attachments.content",
+					)
+			}
 			i++
 		}
 
@@ -209,25 +228,4 @@ func getEmailwithName(t struct {
 	Name  string `json:"name"`
 }) string {
 	return t.Name + " <" + t.Email + ">"
-}
-
-// Create attachment from base64 string
-func createAttachment(fileName string, base64Content string, i int) string {
-	data, err := base64.StdEncoding.DecodeString(base64Content)
-	if err != nil {
-		return ""
-	}
-
-	dirName := filepath.Join(os.TempDir(), "attachment_"+strconv.FormatInt(time.Now().UnixNano(), 10))
-	os.Mkdir(dirName, 0777)
-	file, err := os.Create(filepath.Join(dirName, fileName))
-	if err != nil {
-		fmt.Println("Create file failed.", fileName)
-		return ""
-	}
-
-	defer file.Close()
-	file.Write(data)
-
-	return dirName
 }
